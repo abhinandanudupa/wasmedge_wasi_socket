@@ -3,28 +3,26 @@ use httpcodec::{HttpVersion, ReasonPhrase, Request, RequestDecoder, Response, St
 use server::App;
 use std::io::{Read, Write};
 use wasmedge_wasi_socket::{Shutdown, TcpListener, TcpStream};
-use tokio_util::task::LocalPoolHandle;
+use futures::executor::block_on;
+use futures::future::ready;
 
-async fn render() -> String {
+fn render() -> String {
     let renderer = yew::ServerRenderer::<App>::new();
-
-    let content = renderer.render().await;
-
-    // Good enough for an example, but developers should avoid the replace and extra allocation
-    // here in an actual app.
-    format!("<body>{}", content)
+    let content = block_on(renderer.render());
+    // ready(content);
+    format!("<body>{:?}", content)
 }
 
-async fn handle_http(req: Request<String>) -> bytecodec::Result<Response<String>> {
+fn handle_http() -> bytecodec::Result<Response<String>> {
     Ok(Response::new(
         HttpVersion::V1_0,
         StatusCode::new(200)?,
         ReasonPhrase::new("")?,
-        format!("echo: {}", render().await),
+        format!("echo: {}", render()),
     ))
 }
 
-async fn handle_error(req: Request<String>) -> bytecodec::Result<Response<String>> {
+fn handle_error(req: Request<String>) -> bytecodec::Result<Response<String>> {
     Ok(Response::new(
         HttpVersion::V1_0,
         StatusCode::new(500).unwrap(),
@@ -33,7 +31,7 @@ async fn handle_error(req: Request<String>) -> bytecodec::Result<Response<String
     ))
 }
 
-async fn handle_client(mut stream: TcpStream) -> std::io::Result<()> {
+fn handle_client(mut stream: TcpStream) -> std::io::Result<()> {
     let mut buff = [0u8; 1024];
     let mut data = Vec::new();
 
@@ -49,11 +47,12 @@ async fn handle_client(mut stream: TcpStream) -> std::io::Result<()> {
         RequestDecoder::<httpcodec::BodyDecoder<bytecodec::bytes::Utf8Decoder>>::default();
 
     let req = match decoder.decode_from_bytes(data.as_slice()) {
-        Ok(req) => handle_http(req),
+        Ok(req) => handle_http(),
+        Err(e) => Err(e),
     };
 
-    let write_buf = Ok(req).to_string();
-    stream.write(write_buf.as_bytes())?;
+    // let write_buf = Ok(req).body();
+    // stream.write(write_buf.as_bytes())?;
     stream.shutdown(Shutdown::Both)?;
     Ok(())
 }
@@ -61,8 +60,11 @@ async fn handle_client(mut stream: TcpStream) -> std::io::Result<()> {
 fn main() -> std::io::Result<()> {
     let port = std::env::var("PORT").unwrap_or("1234".to_string());
     println!("new connection at {}", port);
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port), false)?;
+    let listener = //TcpStream::connect(format!("127.0.0.1:{}", port))?;
+    TcpListener::bind(format!("0.0.0.0:{}", port), false)?;
+
     loop {
         let _ = handle_client(listener.accept(false)?.0);
     }
+
 }
